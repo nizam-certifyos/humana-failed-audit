@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Humana Failed Roster Audit — Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { font-family: 'Inter', sans-serif; }
+  body { background: #F1F5F9; }
+  .card { background: #fff; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04); border: 1px solid #E2E8F0; padding: 24px; }
+  .tab-btn { padding: 8px 20px; border-radius: 10px; font-size: 13px; font-weight: 500; cursor: pointer; color: #64748B; transition: all .15s; border: none; background: transparent; }
+  .tab-btn.active { background: #4F46E5; color: #fff; box-shadow: 0 2px 8px rgba(79,70,229,.3); }
+  .tab-btn:not(.active):hover { background: #E2E8F0; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .log-row { display: none; }
+  .log-row.open { display: table-row; }
+  .chevron { transition: transform .2s; color: #CBD5E1; }
+  .chevron.open { transform: rotate(90deg); }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+  @keyframes pulse2 { 0%,100% { opacity:.5; } 50% { opacity:1; } }
+  .pulse { animation: pulse2 2s infinite; }
+  tr.data-row:hover td { background: #F8FAFC; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- ── Header ──────────────────────────────────────────────────────────── -->
+<header style="background:linear-gradient(135deg,#4F46E5 0%,#6D28D9 100%);" class="sticky top-0 z-50 shadow-lg">
+  <div class="max-w-screen-xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div style="background:rgba(255,255,255,.18);backdrop-filter:blur(8px);" class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0">
+        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-white text-lg font-bold leading-tight">Humana Failed Roster Audit</h1>
+        <p class="text-indigo-200 text-xs" id="lastUpdated">Loading…</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <span id="syncBadge" class="flex items-center gap-1.5 text-indigo-200 text-xs">
+        <span class="w-2 h-2 rounded-full bg-green-400 pulse"></span>Auto-refresh 30m
+      </span>
+      <button onclick="loadData()" class="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium text-white transition-all"
+        style="background:rgba(255,255,255,.15);backdrop-filter:blur(8px);"
+        onmouseover="this.style.background='rgba(255,255,255,.28)'" onmouseout="this.style.background='rgba(255,255,255,.15)'">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>Refresh
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-screen-xl mx-auto px-6 py-8 space-y-6">
+
+  <!-- Backend error banner (hidden unless there's a problem) -->
+  <div id="backendErrBanner" style="display:none;align-items:flex-start;gap:10px;background:#FEF2F2;border:1px solid #FECACA;border-radius:12px;padding:14px 18px;">
+    <svg style="width:18px;height:18px;color:#DC2626;flex-shrink:0;margin-top:1px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+    </svg>
+    <div>
+      <p style="font-size:13px;font-weight:700;color:#991B1B;margin:0 0 4px;">Dashboard data unavailable</p>
+      <p id="backendErrText" style="font-size:12px;color:#B91C1C;margin:0;line-height:1.6;"></p>
+    </div>
+  </div>
+
+  <!-- Metric cards -->
+  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4" id="metricCards">
+    <div class="card animate-pulse"><div class="h-3 bg-slate-200 rounded w-3/4 mb-4"></div><div class="h-8 bg-slate-100 rounded w-1/2"></div></div>
+    <div class="card animate-pulse"><div class="h-3 bg-slate-200 rounded w-3/4 mb-4"></div><div class="h-8 bg-slate-100 rounded w-1/2"></div></div>
+    <div class="card animate-pulse"><div class="h-3 bg-slate-200 rounded w-3/4 mb-4"></div><div class="h-8 bg-slate-100 rounded w-1/2"></div></div>
+    <div class="card animate-pulse"><div class="h-3 bg-slate-200 rounded w-3/4 mb-4"></div><div class="h-8 bg-slate-100 rounded w-1/2"></div></div>
+    <div class="card animate-pulse"><div class="h-3 bg-slate-200 rounded w-3/4 mb-4"></div><div class="h-8 bg-slate-100 rounded w-1/2"></div></div>
+  </div>
+
+  <!-- Chart date selector -->
+  <div class="card" style="padding:12px 20px;">
+    <div class="flex flex-wrap items-center gap-3">
+      <span style="font-size:11px;font-weight:600;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;">View charts by date:</span>
+      <select id="chartDateSelect" onchange="selectChartDate(this.value)"
+        class="px-3 py-2 rounded-xl border text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+        style="border-color:#E2E8F0;min-width:180px;">
+        <option value="">All Days</option>
+      </select>
+      <span id="chartDateLabel" style="font-size:11px;font-weight:600;color:#4F46E5;background:#EEF2FF;padding:3px 12px;border-radius:99px;">All Days</span>
+    </div>
+  </div>
+
+  <!-- Charts row 1: breakdown + distribution for selected date -->
+  <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+    <div class="card lg:col-span-2">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Category Breakdown</h3>
+        <span id="chartDateLabel" style="font-size:11px;font-weight:600;color:#4F46E5;background:#EEF2FF;padding:2px 10px;border-radius:99px;">All Days</span>
+      </div>
+      <div style="position:relative;height:250px;"><canvas id="donutChart"></canvas></div>
+    </div>
+    <div class="card lg:col-span-3">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Distribution</h3>
+        <span style="font-size:11px;color:#94A3B8;" id="chartCountLabel"></span>
+      </div>
+      <div style="position:relative;height:250px;"><canvas id="barChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Charts row 2: errors over time (always all dates) -->
+  <div class="card">
+    <div class="flex items-center justify-between mb-5">
+      <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Errors Over Time — Daily Breakdown</h3>
+      <span style="font-size:11px;color:#94A3B8;">All dates · stacked by category</span>
+    </div>
+    <div style="position:relative;height:240px;"><canvas id="timelineChart"></canvas></div>
+  </div>
+
+  <!-- Controls -->
+  <div class="card" style="padding:14px 20px;">
+    <div class="flex flex-col gap-3">
+      <!-- Tab + Export row -->
+      <div class="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between flex-wrap">
+        <div class="flex gap-1 p-1 rounded-xl" style="background:#F1F5F9;">
+          <button class="tab-btn active" onclick="switchTab('active',this)">
+            Active FAILED <span id="cnt-active" class="ml-1 opacity-70 text-xs"></span>
+          </button>
+          <button class="tab-btn" onclick="switchTab('changed',this)">
+            Status Changed <span id="cnt-changed" class="ml-1 opacity-70 text-xs"></span>
+          </button>
+          <button class="tab-btn" onclick="switchTab('all',this)">
+            All Combined <span id="cnt-all" class="ml-1 opacity-70 text-xs"></span>
+          </button>
+          <button class="tab-btn" onclick="switchTab('humana',this)" style="background:linear-gradient(135deg,#FFF7ED,#FEF3C7);color:#92400E;border:1px solid #FDE68A;">
+            🏥 Humana Breakdown <span id="cnt-humana" class="ml-1 opacity-70 text-xs"></span>
+          </button>
+        </div>
+        <button onclick="exportCSV()"
+          class="flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-medium text-slate-600 hover:bg-slate-50 transition-all"
+          style="border-color:#E2E8F0;">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>Export CSV
+        </button>
+      </div>
+      <!-- Filter row -->
+      <div id="mainSearchBar" class="flex gap-2 flex-wrap items-center">
+        <div class="relative">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <input id="searchInput" type="text" placeholder="Search filename or UDID…" oninput="applyFilters()"
+            class="pl-9 pr-4 py-2 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 w-64"
+            style="border-color:#E2E8F0;">
+        </div>
+        <select id="catFilter" onchange="applyFilters()"
+          class="px-3 py-2 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+          style="border-color:#E2E8F0;">
+          <option value="">All Categories</option>
+        </select>
+        <select id="uploaderFilter" onchange="applyFilters()"
+          class="px-3 py-2 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+          style="border-color:#E2E8F0;">
+          <option value="">All Uploaders</option>
+        </select>
+        <select id="dateFilter" onchange="applyFilters()"
+          class="px-3 py-2 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+          style="border-color:#E2E8F0;">
+          <option value="">All Dates</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Humana Breakdown panel (shown only when Humana tab active) -->
+  <div id="humanaBreakdownPanel" style="display:none;" class="space-y-6">
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+      <div class="card lg:col-span-2">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Sub-category Breakdown</h3>
+          <select id="humanaDateFilter" onchange="renderHumanaBreakdown()"
+            class="px-2 py-1 rounded-lg border text-xs focus:outline-none bg-white" style="border-color:#E2E8F0;">
+            <option value="">All Days</option>
+          </select>
+        </div>
+        <!-- Active / Combined toggle -->
+        <div class="flex gap-1 mb-4" style="background:#FEF3C7;border-radius:10px;padding:3px;display:inline-flex;">
+          <button id="humanaToggleActive" onclick="setHumanaScope('active',this)"
+            style="padding:4px 14px;border-radius:8px;font-size:11px;font-weight:600;border:none;cursor:pointer;background:#F59E0B;color:#fff;box-shadow:0 1px 4px rgba(245,158,11,.35);">
+            Active FAILED
+          </button>
+          <button id="humanaToggleAll" onclick="setHumanaScope('all',this)"
+            style="padding:4px 14px;border-radius:8px;font-size:11px;font-weight:600;border:none;cursor:pointer;background:transparent;color:#92400E;">
+            All Combined
+          </button>
+        </div>
+        <div style="position:relative;height:280px;"><canvas id="humanaPieChart"></canvas></div>
+      </div>
+      <div class="card lg:col-span-3">
+        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Error Type Frequency — Files Affected</h3>
+        <div style="position:relative;height:280px;"><canvas id="humanaBarChart"></canvas></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Sub-categories Over Time</h3>
+      <div style="position:relative;height:220px;"><canvas id="humanaTimelineChart"></canvas></div>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div style="padding:16px 20px 12px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:between;gap:12px;">
+        <div class="relative" style="flex:1;">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <input id="humanaSearch" type="text" placeholder="Search filename or UDID…" oninput="renderHumanaTable()"
+            class="pl-9 pr-4 py-2 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 w-full" style="border-color:#E2E8F0;">
+        </div>
+        <select id="humanaSubcatFilter" onchange="renderHumanaTable()"
+          class="px-3 py-2 rounded-xl border text-sm bg-white focus:outline-none" style="border-color:#E2E8F0;min-width:200px;">
+          <option value="">All Sub-categories</option>
+        </select>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="w-full text-sm">
+          <thead>
+            <tr style="background:#FFFBEB;border-bottom:1px solid #FDE68A;">
+              <th class="text-left text-xs font-semibold text-amber-600 uppercase tracking-wide" style="padding:12px 16px;">Filename</th>
+              <th class="text-left text-xs font-semibold text-amber-600 uppercase tracking-wide" style="padding:12px 16px;">UDID</th>
+              <th class="text-left text-xs font-semibold text-amber-600 uppercase tracking-wide" style="padding:12px 16px;">Date</th>
+              <th class="text-left text-xs font-semibold text-amber-600 uppercase tracking-wide" style="padding:12px 16px;">Uploader</th>
+              <th class="text-left text-xs font-semibold text-amber-600 uppercase tracking-wide" style="padding:12px 16px;">Sub-categories</th>
+            </tr>
+          </thead>
+          <tbody id="humanaTableBody">
+            <tr><td colspan="5" class="text-center text-slate-400 text-sm" style="padding:40px;">Select Humana Breakdown tab to load.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:10px 20px;border-top:1px solid #F1F5F9;" class="flex justify-between text-xs text-slate-400">
+        <span id="humanaRowCount">—</span>
+        <span>Only Humana-category files shown</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="mainTable" class="space-y-4">
+  <!-- Deduplication note -->
+  <div style="display:flex;align-items:flex-start;gap:10px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:12px;padding:12px 16px;">
+    <svg style="width:16px;height:16px;color:#3B82F6;flex-shrink:0;margin-top:1px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+    </svg>
+    <p style="font-size:12px;color:#1E40AF;line-height:1.6;margin:0;">
+      <strong>Error log deduplication:</strong> Identical validation messages that appear across multiple roster rows are shown only once in the Error Log below. Data Validation lines and Business Validation messages are each deduplicated independently.
+    </p>
+  </div>
+
+  <!-- Table -->
+  <div class="card" style="padding:0;overflow:hidden;">
+    <div style="overflow-x:auto;">
+      <table class="w-full text-sm">
+        <thead>
+          <tr style="background:#F8FAFC;border-bottom:1px solid #E2E8F0;">
+            <th style="width:36px;padding:14px 8px 14px 20px;"></th>
+            <th class="text-left text-xs font-semibold text-slate-400 uppercase tracking-wide" style="padding:14px 16px;">Filename</th>
+            <th class="text-left text-xs font-semibold text-slate-400 uppercase tracking-wide" style="padding:14px 16px;">UDID</th>
+            <th class="text-left text-xs font-semibold text-slate-400 uppercase tracking-wide" style="padding:14px 16px;">Category</th>
+            <th class="text-left text-xs font-semibold text-slate-400 uppercase tracking-wide" style="padding:14px 16px;">Uploader</th>
+            <th class="text-left text-xs font-semibold text-slate-400 uppercase tracking-wide" style="padding:14px 16px;">Date</th>
+            <th class="text-left text-xs font-semibold text-slate-400 uppercase tracking-wide" style="padding:14px 16px;display:none;" id="colStatus">New Status</th>
+            <th class="text-left text-xs font-semibold text-slate-400 uppercase tracking-wide" style="padding:14px 16px;" id="colExtra">Last Audited</th>
+            <th class="text-left text-xs font-semibold text-slate-400 uppercase tracking-wide" style="padding:14px 16px;" id="colRuns">Runs</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr><td colspan="9" class="text-center text-slate-400 text-sm" style="padding:48px;">Loading data…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="padding:12px 20px;border-top:1px solid #F1F5F9;" class="flex justify-between text-xs text-slate-400">
+      <span id="rowCount">—</span>
+      <span>Auto-refreshes every 30 minutes</span>
+    </div>
+  </div>
+  </div><!-- /mainTable -->
+
+</main>
+
+<script>
+// ── Category colour map ───────────────────────────────────────────────────────
+var CAT = {
+  "Platform Errors":                           {bg:"#FEF2F2",tx:"#991B1B",dot:"#EF4444"},
+  "Humana Errors":                             {bg:"#FFF7ED",tx:"#9A3412",dot:"#F97316"},
+  "Pre-processing Errors":                     {bg:"#EFF6FF",tx:"#1E40AF",dot:"#3B82F6"},
+  "Pre-processing NPI name check Errors":      {bg:"#F5F3FF",tx:"#5B21B6",dot:"#8B5CF6"},
+  "Pre-processing + Humana Errors":            {bg:"#ECFDF5",tx:"#065F46",dot:"#10B981"},
+  "Platform + Humana Errors":                  {bg:"#FFF1F2",tx:"#881337",dot:"#E11D48"},
+  "Platform + Pre-processing Errors":          {bg:"#FEF3C7",tx:"#92400E",dot:"#F59E0B"},
+  "Platform + Pre-processing + Humana Errors": {bg:"#EDE9FE",tx:"#4C1D95",dot:"#7C3AED"},
+  "Pre-processing NPI name check + Humana Errors": {bg:"#F0FDF4",tx:"#14532D",dot:"#22C55E"},
+  "Blank \u2014 No Validation Data":           {bg:"#F8FAFC",tx:"#475569",dot:"#94A3B8"},
+  "Download Failed":                           {bg:"#FEE2E2",tx:"#7F1D1D",dot:"#DC2626"},
+};
+var DEF = {bg:"#F8FAFC",tx:"#475569",dot:"#CBD5E1"};
+
+// ── State ─────────────────────────────────────────────────────────────────────
+var activeData=[], changedData=[], currentTab="active", filteredRows=[];
+var selectedChartDate = "";   // "" = All Days
+var donutChart, barChart, timelineChart;
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+window.onload = function() { loadData(); setInterval(loadData, 30*60*1000); };
+
+function loadData() {
+  setSyncBadge("yellow","Syncing\u2026");
+  fetch("/api/data")
+    .then(function(r) { return r.json(); })
+    .then(onLoaded)
+    .catch(onErr);
+}
+
+function onLoaded(d) {
+  // BQ API returns flat arrays directly (not wrapped in .rows)
+  activeData  = Array.isArray(d.active)  ? d.active  : (d.active  && d.active.rows)  || [];
+  changedData = Array.isArray(d.changed) ? d.changed : (d.changed && d.changed.rows) || [];
+
+  // Surface backend errors
+  var errBanner = document.getElementById("backendErrBanner");
+  if (d.errors && d.errors.length) {
+    errBanner.style.display = "flex";
+    errBanner.querySelector("#backendErrText").textContent =
+      "Backend error — " + d.errors.join(" | ");
+  } else if (activeData.length === 0 && changedData.length === 0) {
+    errBanner.style.display = "flex";
+    errBanner.querySelector("#backendErrText").textContent =
+      "No data returned from BigQuery. Check that the BQ tables exist and the SA has access.";
+  } else {
+    errBanner.style.display = "none";
+  }
+
+  if (d.lastUpdated)
+    document.getElementById("lastUpdated").textContent = "Last sync: " + d.lastUpdated;
+
+  document.getElementById("cnt-active").textContent  = activeData.length;
+  document.getElementById("cnt-changed").textContent = changedData.length;
+  document.getElementById("cnt-all").textContent     = activeData.length + changedData.length;
+  var humanaActive = activeData.filter(function(r){
+    return (r.error_category || "").includes("Humana");
+  }).length;
+  var humanaAll = activeData.concat(changedData).filter(function(r){
+    return (r.error_category || r.last_error_category || "").includes("Humana");
+  }).length;
+  document.getElementById("cnt-humana").textContent = humanaActive + " active / " + humanaAll + " total";
+
+  renderCards(activeData, changedData);
+  populateDateSelect();
+  renderCharts(activeData);
+  renderTimeline(activeData.concat(changedData));
+  populateFilters();
+  switchTab(currentTab, null, true);
+  setSyncBadge("green","Auto-refresh 30m");
+}
+
+function onErr(e) {
+  setSyncBadge("red","Error");
+  console.error(e);
+}
+
+function setSyncBadge(color, text) {
+  var colors = {green:"#4ADE80", yellow:"#FCD34D", red:"#F87171"};
+  document.getElementById("syncBadge").innerHTML =
+    '<span style="width:8px;height:8px;border-radius:50%;background:'+colors[color]+';display:inline-block;" class="pulse"></span> ' + text;
+}
+
+// ── Metric cards ──────────────────────────────────────────────────────────────
+function countK(rows, kw) {
+  return rows.filter(function(r){ return (r.error_category||"").includes(kw); }).length;
+}
+
+function renderCards(active, changed) {
+  var total = active.length + changed.length;
+  var cards = [
+    {label:"Active FAILED",   val:active.length,             icon:"📋", c:"#4F46E5"},
+    {label:"Platform Errors", val:countK(active,"Platform"), icon:"⚠️",  c:"#DC2626"},
+    {label:"Humana Errors",   val:countK(active,"Humana"),   icon:"🏥", c:"#EA580C"},
+    {label:"Pre-processing",  val:countK(active,"Pre-proc"), icon:"⚙️",  c:"#2563EB"},
+    {label:"Status Changed",  val:changed.length,            icon:"✅", c:"#059669"},
+  ];
+  document.getElementById("metricCards").innerHTML = cards.map(function(c) {
+    var pct = total > 0 ? Math.round(c.val / total * 100) : 0;
+    return '<div class="card" style="padding:20px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+      + '<span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#94A3B8;">' + c.label + '</span>'
+      + '<span style="font-size:20px;">' + c.icon + '</span></div>'
+      + '<div style="font-size:38px;font-weight:800;color:' + c.c + ';margin-bottom:10px;">' + c.val + '</div>'
+      + '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<div style="flex:1;height:5px;background:#E2E8F0;border-radius:99px;">'
+      + '<div style="height:5px;border-radius:99px;background:' + c.c + ';width:' + pct + '%;transition:width .5s;"></div></div>'
+      + '<span style="font-size:11px;color:#94A3B8;">' + pct + '%</span></div></div>';
+  }).join("");
+}
+
+// ── Date dropdown selector ────────────────────────────────────────────────────
+function populateDateSelect() {
+  var dates = new Set();
+  activeData.concat(changedData).forEach(function(r){ if (r.date) dates.add(r.date); });
+  var sorted = Array.from(dates).sort().reverse();   // newest first
+  var sel = document.getElementById("chartDateSelect");
+  sel.innerHTML = '<option value="">All Days</option>'
+    + sorted.map(function(d){ return '<option value="'+esc(d)+'">'+esc(d)+'</option>'; }).join("");
+  sel.value = selectedChartDate;
+}
+
+function selectChartDate(date) {
+  selectedChartDate = date;
+  var lbl = document.getElementById("chartDateLabel");
+  if (lbl) lbl.textContent = date || "All Days";
+  var pool = currentTab==="active" ? activeData : currentTab==="changed" ? changedData : activeData.concat(changedData);
+  var filtered = date ? pool.filter(function(r){ return r.date === date; }) : pool;
+  renderCharts(filtered);
+}
+
+// ── Category breakdown + distribution charts ──────────────────────────────────
+function renderCharts(rows) {
+  var counts = {};
+  rows.forEach(function(r) {
+    var c = r.error_category || r.last_error_category || "Unknown";
+    counts[c] = (counts[c]||0) + 1;
+  });
+  var labs = Object.keys(counts).sort(function(a,b){ return counts[b]-counts[a]; });
+  var vals = labs.map(function(l){ return counts[l]; });
+  var dots = labs.map(function(l){ return (CAT[l]||DEF).dot; });
+
+  var lbl = document.getElementById("chartCountLabel");
+  if (lbl) lbl.textContent = rows.length + " record" + (rows.length !== 1 ? "s" : "");
+
+  if (donutChart) donutChart.destroy();
+  if (barChart)   barChart.destroy();
+
+  var dCtx = document.getElementById("donutChart").getContext("2d");
+  donutChart = new Chart(dCtx, {
+    type: "doughnut",
+    data: { labels: labs, datasets: [{ data: vals, backgroundColor: dots, borderWidth: 0, hoverOffset: 8 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: "68%",
+      plugins: {
+        legend: { position:"right", labels:{ font:{family:"Inter",size:11}, padding:10, boxWidth:10, boxHeight:10, borderRadius:3 } },
+        tooltip: { callbacks: { label: function(c) {
+          var t = c.dataset.data.reduce(function(a,b){return a+b;},0);
+          return " " + c.label + ": " + c.parsed + " (" + Math.round(c.parsed/t*100) + "%)";
+        }}}
+      }
+    }
+  });
+
+  var bCtx = document.getElementById("barChart").getContext("2d");
+  barChart = new Chart(bCtx, {
+    type: "bar",
+    data: { labels: labs, datasets: [{ data: vals, backgroundColor: dots, borderRadius: 8, borderSkipped: false }] },
+    options: {
+      indexAxis: "y", responsive: true, maintainAspectRatio: false,
+      plugins: { legend:{display:false}, tooltip:{ callbacks:{ label:function(c){return " "+c.parsed.x+" files";} } } },
+      scales: {
+        x: { grid:{color:"#F1F5F9"}, ticks:{font:{family:"Inter",size:11},color:"#64748B"} },
+        y: { grid:{display:false},   ticks:{font:{family:"Inter",size:11},color:"#1E293B"} }
+      }
+    }
+  });
+}
+
+// ── Errors Over Time (stacked bar, always all dates) ──────────────────────────
+function renderTimeline(allRows) {
+  // Collect all unique categories and dates
+  var catSet = {}, dateSet = {};
+  allRows.forEach(function(r) {
+    var c = r.error_category || r.last_error_category || "Unknown";
+    var d = r.date || "Unknown";
+    catSet[c] = true; dateSet[d] = true;
+  });
+  var dates = Object.keys(dateSet).filter(function(d){ return d !== "Unknown"; }).sort();
+  var cats  = Object.keys(catSet).sort();
+
+  // Build per-date counts per category
+  var datasets = cats.map(function(cat) {
+    return {
+      label: cat,
+      data:  dates.map(function(d) {
+        return allRows.filter(function(r) {
+          var c = r.error_category || r.last_error_category || "Unknown";
+          return r.date === d && c === cat;
+        }).length;
+      }),
+      backgroundColor: (CAT[cat]||DEF).dot,
+      borderRadius: 4,
+      borderSkipped: false,
+    };
+  });
+
+  if (timelineChart) timelineChart.destroy();
+  if (!dates.length) return;
+
+  var tCtx = document.getElementById("timelineChart").getContext("2d");
+  timelineChart = new Chart(tCtx, {
+    type: "bar",
+    data: { labels: dates, datasets: datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { font:{family:"Inter",size:11}, padding:12, boxWidth:12, boxHeight:12, borderRadius:3 }
+        },
+        tooltip: { callbacks: { label: function(c) { return " " + c.dataset.label + ": " + c.parsed.y + " files"; } } }
+      },
+      scales: {
+        x: { stacked: true, grid:{display:false}, ticks:{font:{family:"Inter",size:11},color:"#1E293B"} },
+        y: { stacked: true, grid:{color:"#F1F5F9"}, ticks:{font:{family:"Inter",size:11},color:"#64748B"}, beginAtZero:true }
+      }
+    }
+  });
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(tab, btn, noRender) {
+  currentTab = tab;
+  document.querySelectorAll(".tab-btn").forEach(function(b){ b.classList.remove("active"); });
+  if (btn) { btn.classList.add("active"); }
+  else {
+    var bs = document.querySelectorAll(".tab-btn");
+    if (tab==="active"  && bs[0]) bs[0].classList.add("active");
+    if (tab==="changed" && bs[1]) bs[1].classList.add("active");
+    if (tab==="all"     && bs[2]) bs[2].classList.add("active");
+    if (tab==="humana"  && bs[3]) bs[3].classList.add("active");
+  }
+
+  var isHumana = tab === "humana";
+  var humanaPanel = document.getElementById("humanaBreakdownPanel");
+  var mainSearch  = document.getElementById("mainSearchBar");
+  var mainTbl     = document.getElementById("mainTable");
+  if (humanaPanel) humanaPanel.style.display = isHumana ? "" : "none";
+  if (mainSearch)  mainSearch.style.display  = isHumana ? "none" : "";
+  if (mainTbl)     mainTbl.style.display     = isHumana ? "none" : "";
+
+  if (isHumana) { renderHumanaBreakdown(); return; }
+
+  var pool = tab==="active" ? activeData : tab==="changed" ? changedData : activeData.concat(changedData);
+  var chartRows = selectedChartDate ? pool.filter(function(r){ return r.date === selectedChartDate; }) : pool;
+  renderCharts(chartRows);
+  var colStatus = document.getElementById("colStatus");
+  if (colStatus) colStatus.style.display = tab==="changed" ? "" : "none";
+  document.getElementById("colExtra").textContent = tab==="changed" ? "Status Changed At" : "Last Audited";
+  document.getElementById("colRuns").textContent  = tab==="changed" ? "Previous Category"  : "Runs";
+  applyFilters();
+}
+
+// ── Filter dropdowns ──────────────────────────────────────────────────────────
+function populateFilters() {
+  var all = activeData.concat(changedData);
+
+  // Category
+  var cats = new Set();
+  all.forEach(function(r) {
+    if (r.error_category)      cats.add(r.error_category);
+    if (r.last_error_category) cats.add(r.last_error_category);
+  });
+  document.getElementById("catFilter").innerHTML =
+    '<option value="">All Categories</option>'
+    + Array.from(cats).sort().map(function(c){ return '<option value="'+esc(c)+'">'+esc(c)+'</option>'; }).join("");
+
+  // Uploader
+  var ups = new Set();
+  all.forEach(function(r){ if (r.uploader) ups.add(r.uploader); });
+  document.getElementById("uploaderFilter").innerHTML =
+    '<option value="">All Uploaders</option>'
+    + Array.from(ups).sort().map(function(u){ return '<option value="'+esc(u)+'">'+esc(u)+'</option>'; }).join("");
+
+  // Date (newest first)
+  var dates = new Set();
+  all.forEach(function(r){ if (r.date) dates.add(r.date); });
+  document.getElementById("dateFilter").innerHTML =
+    '<option value="">All Dates</option>'
+    + Array.from(dates).sort().reverse().map(function(d){ return '<option value="'+esc(d)+'">'+esc(d)+'</option>'; }).join("");
+}
+
+// ── Apply search + filters ────────────────────────────────────────────────────
+function applyFilters() {
+  var q        = document.getElementById("searchInput").value.toLowerCase().trim();
+  var cat      = document.getElementById("catFilter").value;
+  var uploader = document.getElementById("uploaderFilter").value;
+  var date     = document.getElementById("dateFilter").value;
+  var rows = currentTab==="active" ? activeData : currentTab==="changed" ? changedData : activeData.concat(changedData);
+  filteredRows = rows.filter(function(r) {
+    var fn  = (r.filename||"").toLowerCase();
+    var uid = (r.udid||"").toLowerCase();
+    var ec  = r.error_category || r.last_error_category || "";
+    var up  = r.uploader || "";
+    var dt  = r.date || "";
+    return (!q        || fn.includes(q) || uid.includes(q))
+        && (!cat      || ec === cat)
+        && (!uploader || up === uploader)
+        && (!date     || dt === date);
+  });
+  renderTable(filteredRows);
+}
+
+// ── Render table ──────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s||"")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;");
+}
+
+// Coloured badge for the current_status field on Status Changed rows
+var STATUS_COLORS = {
+  "APPROVED":  {bg:"#F0FDF4",tx:"#166534",dot:"#22C55E"},
+  "ACTIVE":    {bg:"#EFF6FF",tx:"#1E40AF",dot:"#3B82F6"},
+  "PENDING":   {bg:"#FFFBEB",tx:"#92400E",dot:"#F59E0B"},
+  "COMPLETED": {bg:"#F0FDF4",tx:"#166534",dot:"#16A34A"},
+  "CANCELLED": {bg:"#F8FAFC",tx:"#475569",dot:"#94A3B8"},
+  "DELETED":   {bg:"#FEF2F2",tx:"#991B1B",dot:"#EF4444"},
+};
+function _statusBadge(status) {
+  if (!status) return '<span style="font-size:12px;color:#CBD5E1;">—</span>';
+  var c = STATUS_COLORS[status.toUpperCase()] || {bg:"#F1F5F9",tx:"#334155",dot:"#64748B"};
+  return '<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;'
+    + 'border-radius:99px;font-size:11px;font-weight:700;background:' + c.bg + ';color:' + c.tx + ';">'
+    + '<span style="width:7px;height:7px;border-radius:50%;background:' + c.dot + ';flex-shrink:0;"></span>'
+    + esc(status.toUpperCase()) + '</span>';
+}
+
+function renderTable(rows) {
+  var tb = document.getElementById("tableBody");
+  if (!rows || !rows.length) {
+    tb.innerHTML = '<tr><td colspan="9" class="text-center text-slate-400 text-sm" style="padding:48px;">No records match your filters.</td></tr>';
+    document.getElementById("rowCount").textContent = "0 records";
+    return;
+  }
+  tb.innerHTML = rows.map(function(r, i) {
+    var cat  = r.error_category || r.last_error_category || "";
+    var col  = CAT[cat] || DEF;
+    var udid = r.udid || "";
+    var fn   = r.filename || "";
+    var uploader   = r.uploader       || "—";
+    var date       = r.date           || "—";
+    var curStatus  = r.current_status || "";
+    var extra = currentTab==="changed" ? (r.status_changed_at||"") : (r.last_audited_at||"");
+    var runs  = currentTab==="changed" ? (r.last_error_category||"—") : (r.run_count||"1");
+    var log2  = r.error_log || r.last_error_log || "";
+    var hasLog = !!log2.trim();
+
+    var tabBadge = currentTab==="all"
+      ? (r._tab==="changed"
+          ? '<span style="margin-left:6px;background:#F0FDF4;color:#166534;font-size:10px;font-weight:600;padding:2px 8px;border-radius:99px;vertical-align:middle;">Status Changed</span>'
+          : '<span style="margin-left:6px;background:#FEF2F2;color:#991B1B;font-size:10px;font-weight:600;padding:2px 8px;border-radius:99px;vertical-align:middle;">Active FAILED</span>')
+      : "";
+
+    return '<tr class="data-row" style="border-bottom:1px solid #F1F5F9;cursor:pointer;" onclick="toggleLog('+i+')">'
+      + '<td style="padding:16px 8px 16px 20px;width:36px;">'
+      +   (hasLog ? '<svg id="chev-'+i+'" class="chevron" style="width:16px;height:16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>' : '')
+      + '</td>'
+      + '<td style="padding:14px 16px;max-width:240px;">'
+      +   '<div style="font-weight:500;color:#0F172A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+esc(fn)+'">'+esc(fn)+tabBadge+'</div>'
+      + '</td>'
+      + '<td style="padding:14px 16px;">'
+      +   '<code style="font-size:11px;color:#64748B;background:#F1F5F9;padding:3px 8px;border-radius:6px;font-family:monospace;" title="'+esc(udid)+'">'+esc(udid.slice(0,8))+'…</code>'
+      + '</td>'
+      + '<td style="padding:14px 16px;">'
+      +   '<span class="badge" style="background:'+col.bg+';color:'+col.tx+';"><span style="width:7px;height:7px;border-radius:50%;background:'+col.dot+';flex-shrink:0;"></span>'+esc(cat||"—")+'</span>'
+      + '</td>'
+      + '<td style="padding:14px 16px;font-size:12px;color:#334155;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+esc(uploader)+'">'+esc(uploader)+'</td>'
+      + '<td style="padding:14px 16px;font-size:12px;color:#334155;white-space:nowrap;">'+esc(date)+'</td>'
+      + '<td style="padding:14px 16px;">' + _statusBadge(curStatus) + '</td>'
+      + '<td style="padding:14px 16px;font-size:12px;color:#64748B;">'+esc(extra)+'</td>'
+      + '<td style="padding:14px 16px;font-size:12px;color:#64748B;">'+esc(runs)+'</td>'
+      + '</tr>'
+      + '<tr id="log-'+i+'" class="log-row"><td colspan="9" style="padding:0 24px 20px 52px;background:#FAFBFF;">'
+      +   '<div style="font-size:11px;font-weight:700;color:#4F46E5;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">Error Log</div>'
+      +   '<pre style="font-size:11px;color:#1E293B;white-space:pre-wrap;font-family:\'JetBrains Mono\',monospace;background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:14px;max-height:280px;overflow-y:auto;line-height:1.75;">'
+      +   esc(log2||"(no error log)") + '</pre>'
+      + '</td></tr>';
+  }).join("");
+  document.getElementById("rowCount").textContent = rows.length + " record" + (rows.length!==1?"s":"");
+}
+
+function toggleLog(i) {
+  var row  = document.getElementById("log-"+i);
+  var chev = document.getElementById("chev-"+i);
+  if (!row) return;
+  var open = row.classList.contains("open");
+  row.classList.toggle("open", !open);
+  if (chev) chev.classList.toggle("open", !open);
+}
+
+// ── Humana Breakdown ──────────────────────────────────────────────────────────
+var humanaPieChart, humanaBarChart, humanaTimelineChart2;
+var humanaScope = "active";   // "active" | "all"
+
+function setHumanaScope(scope, btn) {
+  humanaScope = scope;
+  document.getElementById("humanaToggleActive").style.background = scope==="active" ? "#F59E0B" : "transparent";
+  document.getElementById("humanaToggleActive").style.color      = scope==="active" ? "#fff"    : "#92400E";
+  document.getElementById("humanaToggleActive").style.boxShadow  = scope==="active" ? "0 1px 4px rgba(245,158,11,.35)" : "none";
+  document.getElementById("humanaToggleAll").style.background    = scope==="all"    ? "#F59E0B" : "transparent";
+  document.getElementById("humanaToggleAll").style.color         = scope==="all"    ? "#fff"    : "#92400E";
+  document.getElementById("humanaToggleAll").style.boxShadow     = scope==="all"    ? "0 1px 4px rgba(245,158,11,.35)" : "none";
+  renderHumanaBreakdown();
+}
+
+var SUBCAT_COLORS = [
+  "#F97316","#3B82F6","#8B5CF6","#10B981","#EF4444",
+  "#F59E0B","#06B6D4","#EC4899","#84CC16","#6366F1","#14B8A6","#F43F5E",
+];
+
+function _humanaRows() {
+  var pool = humanaScope === "all"
+    ? activeData.concat(changedData)
+    : activeData;
+  return pool.filter(function(r) {
+    return (r.error_category || r.last_error_category || "").includes("Humana");
+  });
+}
+
+function _parseSubs(r) {
+  var s = (r.humana_subcategories || r.last_humana_subcategories || "").trim();
+  if (!s) return [];
+  return s.split(",").map(function(x){ return x.trim(); }).filter(Boolean);
+}
+
+function renderHumanaBreakdown() {
+  var dateFilter = document.getElementById("humanaDateFilter").value;
+  var rows = _humanaRows().filter(function(r){
+    return !dateFilter || r.date === dateFilter;
+  });
+
+  // Count files per sub-category
+  var catCounts = {};
+  rows.forEach(function(r) {
+    _parseSubs(r).forEach(function(s) {
+      catCounts[s] = (catCounts[s]||0) + 1;
+    });
+  });
+  var cats = Object.keys(catCounts).sort(function(a,b){ return catCounts[b]-catCounts[a]; });
+  var vals = cats.map(function(c){ return catCounts[c]; });
+  var colors = cats.map(function(_,i){ return SUBCAT_COLORS[i % SUBCAT_COLORS.length]; });
+
+  if (humanaPieChart)  humanaPieChart.destroy();
+  if (humanaBarChart)  humanaBarChart.destroy();
+
+  var pCtx = document.getElementById("humanaPieChart").getContext("2d");
+  humanaPieChart = new Chart(pCtx, {
+    type: "doughnut",
+    data: { labels: cats, datasets: [{ data: vals, backgroundColor: colors, borderWidth: 0, hoverOffset: 6 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: "62%",
+      plugins: {
+        legend: { position:"right", labels:{ font:{family:"Inter",size:11}, padding:8, boxWidth:10, boxHeight:10 } },
+        tooltip: { callbacks: { label: function(c) {
+          var t = c.dataset.data.reduce(function(a,b){return a+b;},0);
+          return " " + c.label + ": " + c.parsed + " files (" + Math.round(c.parsed/t*100) + "%)";
+        }}}
+      }
+    }
+  });
+
+  var bCtx = document.getElementById("humanaBarChart").getContext("2d");
+  humanaBarChart = new Chart(bCtx, {
+    type: "bar",
+    data: { labels: cats, datasets: [{ data: vals, backgroundColor: colors, borderRadius: 7, borderSkipped:false }] },
+    options: {
+      indexAxis: "y", responsive: true, maintainAspectRatio: false,
+      plugins: { legend:{display:false}, tooltip:{ callbacks:{ label:function(c){ return " "+c.parsed.x+" files"; } } } },
+      scales: {
+        x: { grid:{color:"#FEF3C7"}, ticks:{font:{family:"Inter",size:11},color:"#92400E"} },
+        y: { grid:{display:false},   ticks:{font:{family:"Inter",size:11},color:"#1E293B"} }
+      }
+    }
+  });
+
+  // Timeline chart
+  var allRows  = _humanaRows();
+  var dateSet  = {};
+  allRows.forEach(function(r){ if(r.date) dateSet[r.date]=true; });
+  var dates = Object.keys(dateSet).sort();
+
+  if (humanaTimelineChart2) humanaTimelineChart2.destroy();
+  if (dates.length && cats.length) {
+    var tDatasets = cats.map(function(cat, ci) {
+      return {
+        label: cat,
+        data: dates.map(function(d) {
+          return allRows.filter(function(r) {
+            return r.date === d && _parseSubs(r).indexOf(cat) !== -1;
+          }).length;
+        }),
+        backgroundColor: SUBCAT_COLORS[ci % SUBCAT_COLORS.length],
+        borderRadius: 4, borderSkipped: false,
+      };
+    });
+    var tCtx = document.getElementById("humanaTimelineChart").getContext("2d");
+    humanaTimelineChart2 = new Chart(tCtx, {
+      type: "bar",
+      data: { labels: dates, datasets: tDatasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position:"bottom", labels:{ font:{family:"Inter",size:10}, padding:8, boxWidth:10, boxHeight:10 } },
+          tooltip: { callbacks: { label: function(c){ return " "+c.dataset.label+": "+c.parsed.y+" files"; } } }
+        },
+        scales: {
+          x: { stacked:true, grid:{display:false}, ticks:{font:{family:"Inter",size:11},color:"#1E293B"} },
+          y: { stacked:true, grid:{color:"#FEF3C7"}, ticks:{font:{family:"Inter",size:11},color:"#92400E"}, beginAtZero:true }
+        }
+      }
+    });
+  }
+
+  // Populate sub-cat filter dropdown
+  var sel = document.getElementById("humanaSubcatFilter");
+  sel.innerHTML = '<option value="">All Sub-categories</option>'
+    + cats.map(function(c){ return '<option value="'+esc(c)+'">'+esc(c)+'</option>'; }).join("");
+
+  // Populate date filter
+  var dateSel = document.getElementById("humanaDateFilter");
+  var allDates = Object.keys(dateSet).sort().reverse();
+  dateSel.innerHTML = '<option value="">All Days</option>'
+    + allDates.map(function(d){ return '<option value="'+esc(d)+'">'+esc(d)+'</option>'; }).join("");
+  dateSel.value = dateFilter;
+
+  renderHumanaTable();
+}
+
+function renderHumanaTable() {
+  var q      = (document.getElementById("humanaSearch").value||"").toLowerCase().trim();
+  var subcat = document.getElementById("humanaSubcatFilter").value;
+  var dateF  = document.getElementById("humanaDateFilter").value;
+  var rows   = _humanaRows().filter(function(r) {
+    var fn  = (r.filename||"").toLowerCase();
+    var uid = (r.udid||"").toLowerCase();
+    var subs = _parseSubs(r);
+    var dateOk   = !dateF  || r.date === dateF;
+    var searchOk = !q      || fn.includes(q) || uid.includes(q);
+    var subcatOk = !subcat || subs.indexOf(subcat) !== -1;
+    return dateOk && searchOk && subcatOk;
+  });
+
+  var tb = document.getElementById("humanaTableBody");
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="text-center text-slate-400 text-sm" style="padding:36px;">No records match.</td></tr>';
+    document.getElementById("humanaRowCount").textContent = "0 records";
+    return;
+  }
+
+  tb.innerHTML = rows.map(function(r) {
+    var subs = _parseSubs(r);
+    var chips = subs.map(function(s, i) {
+      var bg = SUBCAT_COLORS[i % SUBCAT_COLORS.length];
+      return '<span style="display:inline-block;padding:2px 10px;border-radius:99px;font-size:11px;font-weight:600;'
+        +'background:'+bg+'22;color:'+bg+';border:1px solid '+bg+'44;margin:2px;">'+esc(s)+'</span>';
+    }).join(" ");
+    if (!chips) chips = '<span style="font-size:11px;color:#CBD5E1;">—</span>';
+    return '<tr style="border-bottom:1px solid #FFFBEB;">'
+      + '<td style="padding:12px 16px;font-weight:500;color:#0F172A;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+esc(r.filename||"")+'">'+esc(r.filename||"")+'</td>'
+      + '<td style="padding:12px 16px;"><code style="font-size:11px;color:#92400E;background:#FEF3C7;padding:2px 8px;border-radius:6px;">'+esc((r.udid||"").slice(0,8))+'…</code></td>'
+      + '<td style="padding:12px 16px;font-size:12px;color:#475569;">'+esc(r.date||"—")+'</td>'
+      + '<td style="padding:12px 16px;font-size:12px;color:#475569;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(r.uploader||"—")+'</td>'
+      + '<td style="padding:12px 16px;">'+chips+'</td>'
+      + '</tr>';
+  }).join("");
+  document.getElementById("humanaRowCount").textContent = rows.length + " Humana file" + (rows.length!==1?"s":"");
+}
+
+// ── CSV export ────────────────────────────────────────────────────────────────
+function exportCSV() {
+  if (!filteredRows.length) return;
+  var keys = ["filename","udid","error_category","uploader","date","last_audited_at","run_count","notes"];
+  var lines = [keys.join(",")].concat(filteredRows.map(function(r){
+    return keys.map(function(k){ return '"' + String(r[k]||"").replace(/"/g,'""') + '"'; }).join(",");
+  }));
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], {type:"text/csv"}));
+  a.download = "roster_audit_export.csv";
+  a.click();
+}
+</script>
+</body>
+</html>
