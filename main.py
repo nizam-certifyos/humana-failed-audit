@@ -74,6 +74,24 @@ def reset_and_audit():
     return jsonify({"status": "started", "mode": "full_reaudit"}), 200
 
 
+@app.route("/seed-patterns", methods=["POST"])
+def seed_patterns():
+    """
+    One-time endpoint: copies the Error Pattern Library from the Google Sheet
+    (SOURCE_SHEET_ID in config) into the BQ patterns table, replacing all rows.
+    Requires the X-Audit-Secret header.
+    """
+    if not _check_secret():
+        return jsonify({"error": "Unauthorized"}), 403
+    try:
+        creds  = _load_sa_credentials()
+        result = _get_bq().seed_from_sheet(creds, config.SOURCE_SHEET_ID)
+        return jsonify({"status": "ok", **result}), 200
+    except Exception:
+        traceback.print_exc()
+        return jsonify({"error": "seed failed — check Cloud Run logs"}), 500
+
+
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"}), 200

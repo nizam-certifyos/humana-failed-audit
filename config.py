@@ -12,6 +12,9 @@ BQ_TABLE_CHANGED          = f"{BQ_PROJECT}.{BQ_DATASET}.failed_roster_status_cha
 BQ_TABLE_HISTORY          = f"{BQ_PROJECT}.{BQ_DATASET}.run_history"
 BQ_TABLE_PATTERNS         = f"{BQ_PROJECT}.{BQ_DATASET}.error_pattern_library"
 
+# Google Sheet that holds the Error Pattern Library (used for one-time seed only)
+SOURCE_SHEET_ID           = "1m9kI_AHovjVNnAGhybBEeAtbXFNvRQ1rGxSEgBbYOHQ"
+
 CERTIFYOS_BASE_URL        = "https://api-service.certifyos.com"
 CERTIFYOS_M2M_SECRET_NAME = "mtmnizprd"
 TENANT_ID                 = "atod8ieaDHhPZrlAadMO"

@@ -210,8 +210,8 @@
       <div style="position:relative;height:220px;"><canvas id="humanaTimelineChart"></canvas></div>
     </div>
     <div class="card" style="padding:0;overflow:hidden;">
-      <div style="padding:16px 20px 12px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:between;gap:12px;">
-        <div class="relative" style="flex:1;">
+      <div style="padding:16px 20px 12px;border-bottom:1px solid #F1F5F9;display:flex;flex-wrap:wrap;align-items:center;gap:10px;">
+        <div class="relative" style="flex:1;min-width:180px;">
           <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
           </svg>
@@ -222,11 +222,19 @@
           class="px-3 py-2 rounded-xl border text-sm bg-white focus:outline-none" style="border-color:#E2E8F0;min-width:200px;">
           <option value="">All Sub-categories</option>
         </select>
+        <button onclick="exportHumanaCSV()"
+          class="flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-medium transition-all"
+          style="border-color:#FDE68A;color:#92400E;background:#FFFBEB;">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>Export CSV
+        </button>
       </div>
       <div style="overflow-x:auto;">
         <table class="w-full text-sm">
           <thead>
             <tr style="background:#FFFBEB;border-bottom:1px solid #FDE68A;">
+              <th style="width:36px;padding:12px 8px 12px 16px;"></th>
               <th class="text-left text-xs font-semibold text-amber-600 uppercase tracking-wide" style="padding:12px 16px;">Filename</th>
               <th class="text-left text-xs font-semibold text-amber-600 uppercase tracking-wide" style="padding:12px 16px;">UDID</th>
               <th class="text-left text-xs font-semibold text-amber-600 uppercase tracking-wide" style="padding:12px 16px;">Date</th>
@@ -235,7 +243,7 @@
             </tr>
           </thead>
           <tbody id="humanaTableBody">
-            <tr><td colspan="5" class="text-center text-slate-400 text-sm" style="padding:40px;">Select Humana Breakdown tab to load.</td></tr>
+            <tr><td colspan="6" class="text-center text-slate-400 text-sm" style="padding:40px;">Select Humana Breakdown tab to load.</td></tr>
           </tbody>
         </table>
       </div>
@@ -325,6 +333,9 @@ function onLoaded(d) {
   // BQ API returns flat arrays directly (not wrapped in .rows)
   activeData  = Array.isArray(d.active)  ? d.active  : (d.active  && d.active.rows)  || [];
   changedData = Array.isArray(d.changed) ? d.changed : (d.changed && d.changed.rows) || [];
+  // Tag rows so "All Combined" tab can show Active / Status Changed badges
+  activeData.forEach(function(r)  { r._tab = "active";  });
+  changedData.forEach(function(r) { r._tab = "changed"; });
 
   // Surface backend errors
   var errBanner = document.getElementById("backendErrBanner");
@@ -658,7 +669,7 @@ function renderTable(rows) {
 
     return '<tr class="data-row" style="border-bottom:1px solid #F1F5F9;cursor:pointer;" onclick="toggleLog('+i+')">'
       + '<td style="padding:16px 8px 16px 20px;width:36px;">'
-      +   (hasLog ? '<svg id="chev-'+i+'" class="chevron" style="width:16px;height:16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>' : '')
+      +   '<svg id="chev-'+i+'" class="chevron" style="width:16px;height:16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>'
       + '</td>'
       + '<td style="padding:14px 16px;max-width:240px;">'
       +   '<div style="font-weight:500;color:#0F172A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+esc(fn)+'">'+esc(fn)+tabBadge+'</div>'
@@ -675,7 +686,26 @@ function renderTable(rows) {
       + '<td style="padding:14px 16px;font-size:12px;color:#64748B;">'+esc(extra)+'</td>'
       + '<td style="padding:14px 16px;font-size:12px;color:#64748B;">'+esc(runs)+'</td>'
       + '</tr>'
-      + '<tr id="log-'+i+'" class="log-row"><td colspan="9" style="padding:0 24px 20px 52px;background:#FAFBFF;">'
+      + '<tr id="log-'+i+'" class="log-row"><td colspan="9" style="padding:0 20px 20px 52px;background:#FAFBFF;border-bottom:1px solid #E2E8F0;">'
+      // ── detail fields ─────────────────────────────────────────────────────
+      +   '<div style="display:flex;flex-wrap:wrap;gap:12px 32px;padding:12px 0 14px;border-bottom:1px solid #E2E8F0;margin-bottom:14px;">'
+      //   filename
+      +     '<div>'
+      +       '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;">Filename</div>'
+      +       '<div style="font-size:12px;color:#0F172A;font-weight:500;word-break:break-all;user-select:all;cursor:text;">'+esc(fn)+'</div>'
+      +     '</div>'
+      //   udid
+      +     '<div>'
+      +       '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;">UDID</div>'
+      +       '<code style="font-size:11px;color:#4F46E5;background:#EEF2FF;padding:3px 10px;border-radius:6px;user-select:all;cursor:text;word-break:break-all;">'+esc(udid)+'</code>'
+      +     '</div>'
+      //   uploader
+      +     '<div>'
+      +       '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;">Uploader</div>'
+      +       '<div style="font-size:12px;color:#0F172A;user-select:all;cursor:text;">'+esc(uploader)+'</div>'
+      +     '</div>'
+      +   '</div>'
+      // ── error log ─────────────────────────────────────────────────────────
       +   '<div style="font-size:11px;font-weight:700;color:#4F46E5;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">Error Log</div>'
       +   '<pre style="font-size:11px;color:#1E293B;white-space:pre-wrap;font-family:\'JetBrains Mono\',monospace;background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:14px;max-height:280px;overflow-y:auto;line-height:1.75;">'
       +   esc(log2||"(no error log)") + '</pre>'
@@ -764,6 +794,10 @@ function renderHumanaBreakdown() {
     }
   });
 
+  // Grow the bar chart container so every label fits — 38px per bar + 32px padding
+  var bWrap = document.getElementById("humanaBarChart").parentNode;
+  bWrap.style.height = Math.max(200, cats.length * 38 + 32) + "px";
+
   var bCtx = document.getElementById("humanaBarChart").getContext("2d");
   humanaBarChart = new Chart(bCtx, {
     type: "bar",
@@ -773,7 +807,10 @@ function renderHumanaBreakdown() {
       plugins: { legend:{display:false}, tooltip:{ callbacks:{ label:function(c){ return " "+c.parsed.x+" files"; } } } },
       scales: {
         x: { grid:{color:"#FEF3C7"}, ticks:{font:{family:"Inter",size:11},color:"#92400E"} },
-        y: { grid:{display:false},   ticks:{font:{family:"Inter",size:11},color:"#1E293B"} }
+        y: {
+          grid:{display:false},
+          ticks:{font:{family:"Inter",size:11},color:"#1E293B", autoSkip:false}
+        }
       }
     }
   });
@@ -831,6 +868,14 @@ function renderHumanaBreakdown() {
   renderHumanaTable();
 }
 
+// ── Humana table expand state ─────────────────────────────────────────────────
+var _humanaExpanded = {};
+
+function toggleHumanaLog(udid) {
+  _humanaExpanded[udid] = !_humanaExpanded[udid];
+  renderHumanaTable();
+}
+
 function renderHumanaTable() {
   var q      = (document.getElementById("humanaSearch").value||"").toLowerCase().trim();
   var subcat = document.getElementById("humanaSubcatFilter").value;
@@ -845,30 +890,92 @@ function renderHumanaTable() {
     return dateOk && searchOk && subcatOk;
   });
 
+  // Store for export
+  window._humanaFilteredRows = rows;
+
   var tb = document.getElementById("humanaTableBody");
   if (!rows.length) {
-    tb.innerHTML = '<tr><td colspan="5" class="text-center text-slate-400 text-sm" style="padding:36px;">No records match.</td></tr>';
+    tb.innerHTML = '<tr><td colspan="6" class="text-center text-slate-400 text-sm" style="padding:36px;">No records match.</td></tr>';
     document.getElementById("humanaRowCount").textContent = "0 records";
     return;
   }
 
-  tb.innerHTML = rows.map(function(r) {
-    var subs = _parseSubs(r);
-    var chips = subs.map(function(s, i) {
+  var html = "";
+  rows.forEach(function(r) {
+    var udid     = r.udid || "";
+    var expanded = !!_humanaExpanded[udid];
+    var errLog   = (r.error_log || r.last_error_log || "").trim();
+    var subs     = _parseSubs(r);
+    var chips    = subs.map(function(s, i) {
       var bg = SUBCAT_COLORS[i % SUBCAT_COLORS.length];
       return '<span style="display:inline-block;padding:2px 10px;border-radius:99px;font-size:11px;font-weight:600;'
         +'background:'+bg+'22;color:'+bg+';border:1px solid '+bg+'44;margin:2px;">'+esc(s)+'</span>';
     }).join(" ");
     if (!chips) chips = '<span style="font-size:11px;color:#CBD5E1;">—</span>';
-    return '<tr style="border-bottom:1px solid #FFFBEB;">'
-      + '<td style="padding:12px 16px;font-weight:500;color:#0F172A;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+esc(r.filename||"")+'">'+esc(r.filename||"")+'</td>'
-      + '<td style="padding:12px 16px;"><code style="font-size:11px;color:#92400E;background:#FEF3C7;padding:2px 8px;border-radius:6px;">'+esc((r.udid||"").slice(0,8))+'…</code></td>'
-      + '<td style="padding:12px 16px;font-size:12px;color:#475569;">'+esc(r.date||"—")+'</td>'
-      + '<td style="padding:12px 16px;font-size:12px;color:#475569;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(r.uploader||"—")+'</td>'
-      + '<td style="padding:12px 16px;">'+chips+'</td>'
+
+    var toggleBtn = '<td style="padding:10px 8px;text-align:center;cursor:pointer;" onclick="toggleHumanaLog(\''+esc(udid)+'\')">'
+      + '<span style="display:inline-block;width:20px;height:20px;border-radius:50%;background:#FEF3C7;border:1px solid #FDE68A;font-size:11px;line-height:20px;text-align:center;transition:transform .2s;'
+      + (expanded ? 'transform:rotate(90deg);' : '')
+      + '">▶</span></td>';
+
+    html += '<tr style="border-bottom:1px solid #FFFBEB;' + (expanded ? 'background:#FFFBF0;' : '') + '">'
+      + toggleBtn
+      + '<td style="padding:10px 16px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+      +   '<span style="font-weight:500;color:#0F172A;">'+esc(r.filename||"")+'</span></td>'
+      + '<td style="padding:10px 16px;">'
+      +   '<code style="font-size:11px;color:#92400E;background:#FEF3C7;padding:2px 8px;border-radius:6px;">'+esc(udid.slice(0,8))+'…</code></td>'
+      + '<td style="padding:10px 16px;font-size:12px;color:#475569;">'+esc(r.date||"—")+'</td>'
+      + '<td style="padding:10px 16px;font-size:12px;color:#475569;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(r.uploader||"—")+'</td>'
+      + '<td style="padding:10px 16px;">'+chips+'</td>'
       + '</tr>';
-  }).join("");
+
+    if (expanded) {
+      html += '<tr style="background:#FFFBF0;border-bottom:1px solid #FDE68A;">'
+        + '<td></td>'
+        + '<td colspan="5" style="padding:10px 16px 16px;">'
+        // ── detail fields ───────────────────────────────────────────────────
+        +   '<div style="display:flex;flex-wrap:wrap;gap:12px 32px;padding:8px 0 12px;border-bottom:1px solid #FDE68A;margin-bottom:12px;">'
+        +     '<div>'
+        +       '<div style="font-size:10px;font-weight:700;color:#B45309;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;">Filename</div>'
+        +       '<div style="font-size:12px;color:#0F172A;font-weight:500;word-break:break-all;user-select:all;cursor:text;">'+esc(r.filename||"—")+'</div>'
+        +     '</div>'
+        +     '<div>'
+        +       '<div style="font-size:10px;font-weight:700;color:#B45309;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;">UDID</div>'
+        +       '<code style="font-size:11px;color:#92400E;background:#FEF9C3;padding:3px 10px;border-radius:6px;user-select:all;cursor:text;word-break:break-all;">'+esc(udid)+'</code>'
+        +     '</div>'
+        +     '<div>'
+        +       '<div style="font-size:10px;font-weight:700;color:#B45309;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;">Uploader</div>'
+        +       '<div style="font-size:12px;color:#0F172A;user-select:all;cursor:text;">'+esc(r.uploader||"—")+'</div>'
+        +     '</div>'
+        +   '</div>'
+        // ── error log ───────────────────────────────────────────────────────
+        +   (errLog
+            ? '<div style="font-size:11px;font-weight:600;color:#92400E;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em;">Error Log</div>'
+              + '<pre style="font-size:11px;line-height:1.6;color:#374151;background:#FFFDE7;border:1px solid #FDE68A;border-radius:8px;padding:10px 14px;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;margin:0;">'+esc(errLog)+'</pre>'
+            : '<div style="font-size:12px;color:#94A3B8;font-style:italic;">(no error log)</div>')
+        + '</td></tr>';
+    }
+  });
+
+  tb.innerHTML = html;
   document.getElementById("humanaRowCount").textContent = rows.length + " Humana file" + (rows.length!==1?"s":"");
+}
+
+// ── Humana CSV export ─────────────────────────────────────────────────────────
+function exportHumanaCSV() {
+  var rows = window._humanaFilteredRows || [];
+  if (!rows.length) { alert("No Humana records to export."); return; }
+  var keys = ["filename","udid","error_category","date","uploader","humana_subcategories","error_log"];
+  var lines = [keys.join(",")].concat(rows.map(function(r) {
+    return keys.map(function(k) {
+      var v = r[k] || r["last_" + k] || "";
+      return '"' + String(v).replace(/"/g, '""') + '"';
+    }).join(",");
+  }));
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], {type:"text/csv"}));
+  a.download = "humana_breakdown_export_" + new Date().toISOString().slice(0,10) + ".csv";
+  a.click();
 }
 
 // ── CSV export ────────────────────────────────────────────────────────────────

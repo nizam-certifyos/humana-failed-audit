@@ -192,6 +192,61 @@ class BQClient:
             "moved_this_run": stats.get("moved", 0),
         }])
 
+    def seed_from_sheet(self, credentials, sheet_id: str) -> dict:
+        """
+        One-time seed: read the 'Error Pattern Library' tab from the given Google
+        Sheet and replace the BQ patterns table with its contents.
+        SA must have at least Viewer access on the spreadsheet.
+        """
+        from googleapiclient.discovery import build
+
+        sheets = build("sheets", "v4", credentials=credentials, cache_discovery=False)
+        result = sheets.spreadsheets().values().get(
+            spreadsheetId=sheet_id,
+            range="'Error Pattern Library'!A:E",
+        ).execute()
+
+        values = result.get("values", [])
+        if len(values) < 2:
+            return {"seeded": 0, "skipped": 0, "error": "No data rows found in Error Pattern Library tab"}
+
+        headers = [h.lower().strip() for h in values[0]]
+        rows_to_insert, seen = [], set()
+
+        for row in values[1:]:
+            while len(row) < len(headers):
+                row.append("")
+            r = dict(zip(headers, row))
+            pattern = r.get("pattern", "").strip()
+            subcat  = r.get("subcategory", "").strip()
+            if not pattern or not subcat:
+                continue
+            key = pattern.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+
+            raw_date = (r.get("added_at", "") or "").strip()
+            added_at = raw_date[:10] if len(raw_date) >= 10 else _now_ts()[:10]
+            try:
+                match_count = int(r.get("match_count", 0) or 0)
+            except (ValueError, TypeError):
+                match_count = 0
+
+            rows_to_insert.append({
+                "pattern":     key,
+                "subcategory": subcat,
+                "source":      (r.get("source", "") or "Seed").strip() or "Seed",
+                "added_at":    added_at,
+                "match_count": match_count,
+            })
+
+        skipped = len(values) - 1 - len(rows_to_insert)
+        self.client.query(f"DELETE FROM `{config.BQ_TABLE_PATTERNS}` WHERE TRUE").result()
+        self._insert(config.BQ_TABLE_PATTERNS, rows_to_insert)
+        print(f"[bq] seeded {len(rows_to_insert)} patterns from sheet (skipped {skipped} blank/duplicate rows)")
+        return {"seeded": len(rows_to_insert), "skipped": skipped}
+
     def get_dashboard_data(self) -> dict[str, Any]:
         def _clean(rows: list[dict]) -> list[dict]:
             return [{k: ("" if v is None else str(v)) for k, v in r.items()} for r in rows]

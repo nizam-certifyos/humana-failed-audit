@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import concurrent.futures
 import csv
 import io
 import json
 import random
 import re
+import threading
 import time
 import datetime
 from typing import Optional
@@ -259,34 +261,44 @@ def _nppes_check(npi: str, first: str, last: str, gemini: GenerativeModel) -> bo
 _NPI_NAMECHECK_MARKER = "provider name is not matching with nppes"
 _SECTION_HEADERS      = {"=== data validations ===", "=== business validations ==="}
 
-_GEMINI_SUBCATS = """
-- Degree / Title Not Valid
-- Degree / Title Missing
-- NPI Blank
-- First / Last Name Blank
-- NPPES Name Mismatch
-- TIN Error
-- Geographic Market Error
-- Provider License / Credential Error
-- Provider Type Error
-- Individual vs Group Error
-- Duplicate Provider Error
-- Skip — Pre-processing
-- Other Humana Error
-""".strip()
+_BASE_SUBCATS = [
+    "Degree / Title Not Valid",
+    "Degree / Title Missing",
+    "NPI Blank",
+    "First / Last Name Blank",
+    "NPPES Name Mismatch",
+    "TIN Error",
+    "Geographic Market Error",
+    "Provider License / Credential Error",
+    "Provider Type Error",
+    "Individual vs Group Error",
+    "Duplicate Provider Error",
+]
+
+MAX_WORKERS = 8   # parallel CSV downloads
 
 
-def _gemini_tag(lines: list[str], gemini: GenerativeModel) -> list[dict]:
+def _gemini_tag(lines: list[str], gemini: GenerativeModel, known_subcats: list[str] | None = None) -> list[dict]:
     if not lines:
         return []
-    numbered = "\n".join(f"{i+1}. {l}" for i, l in enumerate(lines))
+
+    all_subcats = list(dict.fromkeys(_BASE_SUBCATS + (known_subcats or [])))
+    subcat_list = "\n".join(f"- {s}" for s in all_subcats)
+    numbered    = "\n".join(f"{i+1}. {l}" for i, l in enumerate(lines))
+
     prompt = (
-        "Classify each healthcare roster validation error into a Humana sub-category.\n"
-        "Ignore lines about CertifyOS Group Name/NPI/TIN/Network Name or NPPES name mismatch "
-        "— classify those as 'Skip — Pre-processing'.\n\n"
-        f"Sub-categories:\n{_GEMINI_SUBCATS}\n\n"
-        "Return a JSON array only (no explanation):\n"
-        '{"line_number":<int>,"subcategory":"<label>","pattern":"<3-7 word key phrase>"}\n\n'
+        "You are classifying healthcare roster validation errors into Humana sub-categories.\n\n"
+        "STEP 1 — SKIP THESE (return 'Skip — Pre-processing'):\n"
+        "  • Any error mentioning CertifyOS Group Name / Group NPI / Group TIN / Network Name\n"
+        "  • Any error about 'Provider Name is not matching with NPPES'\n\n"
+        f"STEP 2 — APPROVED SUB-CATEGORY LIST (your complete knowledge base):\n{subcat_list}\n\n"
+        "STEP 3 — CLASSIFICATION RULES:\n"
+        "  • ALWAYS try to match one of the existing labels above. Stretch to fit.\n"
+        "  • NEVER invent a new sub-category unless you have exhausted ALL existing options.\n"
+        "  • If you must create a new label, name it similarly to the existing ones (Title Case, short noun phrase).\n"
+        "  • NEVER use vague labels like 'Other' or 'Unknown'.\n\n"
+        "Return a JSON array only (no explanation), one object per line:\n"
+        '[{"line_number":<int>,"subcategory":"<label>","pattern":"<3-7 word key phrase>"}]\n\n'
         f"Lines:\n{numbered}"
     )
     try:
@@ -297,8 +309,8 @@ def _gemini_tag(lines: list[str], gemini: GenerativeModel) -> list[dict]:
                 raw = raw[4:]
         results = []
         for item in json.loads(raw.strip()):
-            subcat = item.get("subcategory", "Other Humana Error")
-            if subcat == "Skip — Pre-processing":
+            subcat = (item.get("subcategory") or "").strip()
+            if not subcat or subcat in ("Skip — Pre-processing", "Skip"):
                 continue
             idx = item.get("line_number", 1) - 1
             if 0 <= idx < len(lines):
@@ -310,7 +322,14 @@ def _gemini_tag(lines: list[str], gemini: GenerativeModel) -> list[dict]:
         return results
     except Exception as e:
         log(f"Gemini tagging failed: {e}", "WARN")
-        return [{"line": l, "subcategory": "Other Humana Error", "pattern": l[:60].lower()} for l in lines]
+        # keyword-based fallback against known subcats
+        fallback = []
+        for line in lines:
+            ll = line.lower()
+            matched = next((s for s in all_subcats if any(w.lower() in ll for w in s.split())), None)
+            if matched:
+                fallback.append({"line": line, "subcategory": matched, "pattern": ll[:60]})
+        return fallback
 
 
 def classify_humana_subcategories(
@@ -318,12 +337,21 @@ def classify_humana_subcategories(
     pattern_db: dict,
     pending: list,
     gemini: GenerativeModel,
+    error_category: str = "",
 ) -> list[str]:
+    """
+    Classify error_log into Humana sub-category tags.
+
+    NPI name-check lines are skipped ONLY for mixed 'Pre-processing NPI + Humana'
+    files. For pure Humana files they are confirmed real mismatches and should
+    map to 'NPPES Name Mismatch'.
+    """
     if not error_log or not error_log.strip():
         return []
 
     matched: set = set()
     unknown: list = []
+    skip_npi_lines = "Pre-processing NPI" in error_category
 
     for raw in error_log.splitlines():
         line = raw.strip()
@@ -332,7 +360,7 @@ def classify_humana_subcategories(
         ll = line.lower()
         if any(ll.startswith(p) or (": " + p) in ll for p in config.CORE_PREPROC_COLS):
             continue
-        if _NPI_NAMECHECK_MARKER in ll:
+        if skip_npi_lines and _NPI_NAMECHECK_MARKER in ll:
             continue
 
         found = next((subcat for pat, subcat in pattern_db.items() if pat in ll), None)
@@ -342,12 +370,16 @@ def classify_humana_subcategories(
             unknown.append(line)
 
     unknown = list(dict.fromkeys(unknown))
-    for gr in _gemini_tag(unknown, gemini):
-        matched.add(gr["subcategory"])
-        pending.append({"pattern": gr["pattern"], "subcategory": gr["subcategory"], "source": "Gemini"})
-        pattern_db[gr["pattern"]] = gr["subcategory"]
+    known_subcats = sorted(set(pattern_db.values()))
+    for gr in _gemini_tag(unknown, gemini, known_subcats):
+        subcat = gr.get("subcategory", "").strip()
+        if not subcat:
+            continue
+        matched.add(subcat)
+        pending.append({"pattern": gr["pattern"], "subcategory": subcat, "source": "Gemini"})
+        pattern_db[gr["pattern"]] = subcat
 
-    return sorted(matched) if matched else ["Other Humana Error"]
+    return sorted(matched) if matched else []
 
 
 # ── Main orchestrator ──────────────────────────────────────────────────────────
@@ -413,6 +445,35 @@ def run_audit(force_reaudit: bool = False) -> dict:
     new_list = [r for r in failed_rosters if r["udid"] in to_audit_udids]
     results  = []
 
+    # ── Parallel CSV pre-download ─────────────────────────────────────────────
+    _csv_cache: dict[str, str | None] = {}
+    _dl_token_lock = threading.Lock()
+
+    def _dl_worker(roster: dict) -> tuple[str, str | None]:
+        uid      = roster["udid"]
+        filepath = roster["filepath"]
+        try:
+            text = api.download_csv(uid, filepath)
+            return uid, text
+        except Exception as e:
+            log(f"  [DL] {uid[:8]}: {e}", "WARN")
+            return uid, None
+
+    if new_list:
+        log(f"Pre-downloading {len(new_list)} CSV(s) with {MAX_WORKERS} workers…")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futs = {pool.submit(_dl_worker, r): r["udid"] for r in new_list}
+            done = 0
+            for fut in concurrent.futures.as_completed(futs):
+                uid, text = fut.result()
+                _csv_cache[uid] = text
+                done += 1
+                if done % 10 == 0 or done == len(new_list):
+                    log(f"  [DL] {done}/{len(new_list)} downloaded")
+        ok  = sum(1 for v in _csv_cache.values() if v)
+        bad = len(_csv_cache) - ok
+        log(f"Pre-download complete — {ok} OK, {bad} failed", "OK" if not bad else "WARN")
+
     for i in range(0, len(new_list), config.BATCH_SIZE):
         batch = new_list[i: i + config.BATCH_SIZE]
         log(f"Batch {i // config.BATCH_SIZE + 1}: {len(batch)} file(s)")
@@ -423,7 +484,7 @@ def run_audit(force_reaudit: bool = False) -> dict:
             is_reaudit              = uid in changed_udids
             log(f"  {'[re-audit] ' if is_reaudit else ''}{filename[:60]} ({uid[:8]}…)")
 
-            csv_text = api.download_csv(uid, filepath)
+            csv_text = _csv_cache.get(uid)
             if not csv_text:
                 results.append({"filename": filename, "udid": uid, "error_category": "Download Failed",
                                  "uploader": uploader, "date": date, "notes": "Download failed",
@@ -457,7 +518,7 @@ def run_audit(force_reaudit: bool = False) -> dict:
 
             humana_subcats = ""
             if "Humana" in category:
-                subs = classify_humana_subcategories(parsed["error_log"], pattern_db, pending_patterns, gemini)
+                subs = classify_humana_subcategories(parsed["error_log"], pattern_db, pending_patterns, gemini, category)
                 humana_subcats = ", ".join(subs)
                 log(f"    Humana sub-cats: {humana_subcats}", "OK")
 
