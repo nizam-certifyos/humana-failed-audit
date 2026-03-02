@@ -8,7 +8,8 @@ from flask import Flask, jsonify, render_template, request
 
 import config
 from bq_client import BQClient
-from auditor import _load_sa_credentials, run_audit
+from google.oauth2 import service_account
+from auditor import _load_secret, _load_sa_credentials, run_audit
 
 app = Flask(__name__)
 
@@ -84,8 +85,19 @@ def seed_patterns():
     if not _check_secret():
         return jsonify({"error": "Unauthorized"}), 403
     try:
-        creds  = _load_sa_credentials()
-        result = _get_bq().seed_from_sheet(creds, config.SOURCE_SHEET_ID)
+        # Sheets API needs the spreadsheets.readonly scope which is NOT in the
+        # default SA credentials (those only have cloud-platform + bigquery).
+        # Load a fresh credential set with the extra scope for this one call.
+        sa_info     = _load_secret(config.SECRET_NAME)
+        sheets_creds = service_account.Credentials.from_service_account_info(
+            sa_info,
+            scopes=[
+                "https://www.googleapis.com/auth/spreadsheets.readonly",
+                "https://www.googleapis.com/auth/cloud-platform",
+                "https://www.googleapis.com/auth/bigquery",
+            ],
+        )
+        result = _get_bq().seed_from_sheet(sheets_creds, config.SOURCE_SHEET_ID)
         return jsonify({"status": "ok", **result}), 200
     except Exception:
         traceback.print_exc()
