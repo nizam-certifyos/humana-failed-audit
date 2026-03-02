@@ -55,7 +55,7 @@ class CertifyOSClient:
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {token}",
-            "x-tenant-id":   config.TENANT_ID,
+            "tenant-id":     config.TENANT_ID,
             "Content-Type":  "application/json",
         })
 
@@ -81,31 +81,75 @@ class CertifyOSClient:
     @staticmethod
     def authenticate(client_id: str, client_secret: str) -> "CertifyOSClient":
         r = requests.post(
-            f"{config.CERTIFYOS_BASE_URL}/auth/token",
-            json={"clientId": client_id, "clientSecret": client_secret, "tenantId": config.TENANT_ID},
+            f"{config.CERTIFYOS_BASE_URL}/auth/client-credentials",
+            headers={"Content-Type": "application/json", "tenant-id": config.TENANT_ID},
+            json={"clientId": client_id, "clientSecret": client_secret},
             timeout=30,
         )
         r.raise_for_status()
-        return CertifyOSClient(r.json()["token"])
+        token = r.json().get("accessToken")
+        if not token:
+            raise ValueError(f"No accessToken in auth response: {r.text[:200]}")
+        return CertifyOSClient(token)
 
     def fetch_failed_rosters(self) -> list[dict]:
-        rosters, page = [], 0
+        from urllib.parse import urlencode
+        import json as _json
+        rosters, page, total_count = [], 0, None
         while True:
-            data  = self._get("/roster", params={"status": config.FAILED_STATUS, "page": page,
-                                                  "pageSize": config.PAGE_SIZE}).json()
-            items = data.get("data") or data.get("items") or data.get("rosters") or []
+            filter_str = _json.dumps({
+                "data.status": {"in": [config.FAILED_STATUS]},
+                "tenantId":    {"eq": config.TENANT_ID},
+            })
+            url = f"/roster?{urlencode({'filter': filter_str, 'page': page, 'size': config.PAGE_SIZE})}"
+            data  = self._get(url).json()
+            items = data.get("data") or []
+            if total_count is None:
+                total_count = data.get("totalCount")
             if not items:
                 break
-            for item in items:
-                meta = item.get("file", {})
+            for r in items:
+                uid = r.get("id", "")
+                if not uid:
+                    continue
+                filename = (
+                    r.get("initialFilename")
+                    or r.get("data", {}).get("initialFilename")
+                    or r.get("fileName")
+                    or r.get("name")
+                    or f"unknown_{uid}.csv"
+                )
+                file_path = (
+                    r.get("filePath")
+                    or r.get("data", {}).get("filePath")
+                    or r.get("data", {}).get("fileUrl")
+                    or ""
+                )
+                uploader = (
+                    r.get("createdBy")
+                    or r.get("data", {}).get("createdBy")
+                    or ""
+                )
+                created_at = (
+                    r.get("createdAt")
+                    or r.get("data", {}).get("createdAt")
+                    or ""
+                )
+                updated_at = (
+                    r.get("updatedAt")
+                    or r.get("data", {}).get("updatedAt")
+                    or ""
+                )
                 rosters.append({
-                    "udid":       item.get("id", ""),
-                    "filename":   meta.get("initialFilename", meta.get("fileName", "")),
-                    "filepath":   meta.get("filePath", ""),
-                    "uploader":   item.get("createdBy", ""),
-                    "date":       (item.get("createdAt", "") or "")[:10],
-                    "updated_at": item.get("updatedAt", ""),   # ISO string, used for change detection
+                    "udid":       uid,
+                    "filename":   filename,
+                    "filepath":   file_path,
+                    "uploader":   uploader,
+                    "date":       str(created_at)[:10],
+                    "updated_at": updated_at,
                 })
+            if total_count and len(rosters) >= int(total_count):
+                break
             if len(items) < config.PAGE_SIZE:
                 break
             page += 1
@@ -114,28 +158,60 @@ class CertifyOSClient:
 
     def get_udid_status(self, udid: str) -> str:
         try:
-            data = self._get(f"/roster/{udid}").json()
-            return (data.get("data") or data).get("status", "UNKNOWN")
+            data   = self._get(f"/roster/{udid}").json()
+            status = (
+                data.get("status")
+                or data.get("data", {}).get("status")
+                or "Unknown"
+            )
+            return str(status).upper()
         except Exception as e:
             log(f"Status fetch failed for {udid[:8]}: {e}", "WARN")
-            return "UNKNOWN"
+            return "Unknown"
 
     def download_csv(self, udid: str, filepath: str) -> Optional[str]:
-        try:
-            data = self._get(f"/roster/{udid}/download-records").json()
-            url  = data.get("url") or data.get("downloadUrl") or data.get("signedUrl")
-            if url:
-                r = requests.get(url, timeout=120)
-                r.raise_for_status()
-                return r.text
-        except Exception as e:
-            log(f"Primary download failed {udid[:8]}: {e}", "WARN")
+        from urllib.parse import urlparse, unquote, quote
 
-        if filepath:
+        # ── Step 1: get signed GCS URL from download-records ─────────────────
+        signed_url = None
+        try:
+            resp = self._get(f"/roster/{udid}/download-records")
+            body = resp.json()
+            signed_url = body.get("fileUrl", "")
+            if not signed_url:
+                log(f"  download-records JSON has no fileUrl for {udid[:8]}: {str(body)[:200]}", "WARN")
+        except Exception as e:
+            log(f"  download-records failed {udid[:8]}: {e}", "WARN")
+
+        # ── Step 2: fetch actual CSV from signed URL ──────────────────────────
+        if signed_url:
             try:
-                return self._get("/storage/download", params={"filePath": filepath}).text
+                r = requests.get(signed_url, timeout=120)
+                r.raise_for_status()
+                return r.content.decode("utf-8-sig", errors="replace")
             except Exception as e:
-                log(f"Fallback download failed {udid[:8]}: {e}", "WARN")
+                log(f"  GCS signed URL fetch failed {udid[:8]}: {e}", "WARN")
+
+        # ── Step 3: /storage/download fallback with roster-exports path ───────
+        export_path = ""
+        if signed_url:
+            try:
+                gcs_path    = unquote(urlparse(signed_url).path)
+                export_path = gcs_path.split("/pdm_roster_bucket/", 1)[-1]
+            except Exception:
+                pass
+        if not export_path and filepath:
+            fn = filepath.split("/", 2)[-1]
+            fn = fn.split("-", 1)[-1] if "-" in fn[:20] else fn
+            export_path = f"roster-exports/{udid}/{fn}"
+
+        if export_path:
+            try:
+                fallback_url = f"/storage/download?filePath={quote(export_path, safe='')}"
+                return self._get(fallback_url).content.decode("utf-8-sig", errors="replace")
+            except Exception as e:
+                log(f"  Fallback download failed {udid[:8]}: {e}", "WARN")
+
         return None
 
 
