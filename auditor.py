@@ -59,6 +59,17 @@ class CertifyOSClient:
             "Content-Type":  "application/json",
         })
 
+    def _reset_session(self):
+        """Recreate the session to clear any corrupted SSL connections from the pool."""
+        token = self.session.headers.get("Authorization", "")
+        self.session.close()
+        self.session = requests.Session()
+        self.session.headers.update({
+            "Authorization": token,
+            "tenant-id":     config.TENANT_ID,
+            "Content-Type":  "application/json",
+        })
+
     def _get(self, path: str, params: dict = None, stream: bool = False):
         url = f"{config.CERTIFYOS_BASE_URL}{path}"
         for attempt in range(config.MAX_RETRIES):
@@ -71,6 +82,14 @@ class CertifyOSClient:
                     continue
                 r.raise_for_status()
                 return r
+            except requests.exceptions.SSLError as e:
+                # SSL errors corrupt the connection pool — must recreate session before retry
+                if attempt == config.MAX_RETRIES - 1:
+                    raise
+                wait = min(config.BASE_BACKOFF * 2 ** attempt + random.uniform(0, 1), config.MAX_BACKOFF)
+                log(f"SSL error on {path} (attempt {attempt+1}/{config.MAX_RETRIES}), resetting session — retry in {wait:.1f}s", "WARN")
+                self._reset_session()
+                time.sleep(wait)
             except requests.RequestException as e:
                 if attempt == config.MAX_RETRIES - 1:
                     raise
